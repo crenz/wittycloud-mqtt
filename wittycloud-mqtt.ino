@@ -54,6 +54,8 @@ bool rotateRGB = true;
 #include <Adafruit_BME280.h>
 #endif
 
+#define MIN(a, b) a > b ? b: a
+
 /**********************************************************************
  * Definitions
  **********************************************************************/
@@ -159,16 +161,17 @@ void io_rgb_setup() {
 }
 
 
-void io_rgb(bool red, bool green, bool blue) {
-  digitalWrite(PIN_RGB_RED, red);
-  digitalWrite(PIN_RGB_GREEN, green);
-  digitalWrite(PIN_RGB_BLUE, blue);
+void io_rgb(unsigned int red, unsigned int green, unsigned int blue) {
+  analogWrite(PIN_RGB_RED, MIN(red, 1023));
+  analogWrite(PIN_RGB_GREEN, MIN(green, 1023));
+  analogWrite(PIN_RGB_BLUE, MIN(blue, 1023));
 }
 
 void io_rgb_rotate() {
+  int brightness = 512;
   rotateRGBIdx = (rotateRGBIdx + 1) % rotateRGBValuesLen;
   rotateRGBVal = rotateRGBValues[rotateRGBIdx];
-  io_rgb(rotateRGBVal & 0x1, rotateRGBVal & 0x2, rotateRGBVal & 0x4);
+  io_rgb(brightness * (rotateRGBVal & 0x1), brightness * (rotateRGBVal & 0x2), brightness * (rotateRGBVal & 0x4));
 }
 
 void io_led_setup() {
@@ -184,8 +187,8 @@ void io_led(bool on) {
 /* Helper functions: BME280 */
 
 void io_bme280_setup() {
-  logc("BME280");
 #ifdef ENABLE_BME_280_SUPPORT
+  logc("BME280");
   if (!bme.begin()) {
     Serial.println("Could not find a valid BME280 sensor, check wiring!");
     //while (1);
@@ -200,7 +203,7 @@ void io_bme280_setup() {
  *  {"rgb": [1, 0, 1], "sensorUpdateRate": 2000, "rotateRGB": true, "rotateRateRGB": 100}
  */
 void sensor_read() {
-  StaticJsonBuffer<200> jsonBuffer;
+  StaticJsonBuffer<512> jsonBuffer;
   JsonObject& root = jsonBuffer.createObject();
   
 #ifdef ENABLE_BME_280_SUPPORT
@@ -233,7 +236,7 @@ void wifi_setup() {
 
   WiFi.macAddress(espMacAddress);
 
-  Serial.printf(" MAC: %02x:%02x:%02x:%02x:%02x:%02x ",
+  Serial.printf(" MAC address %02x:%02x:%02x:%02x:%02x:%02x ",
     espMacAddress[0],
     espMacAddress[1],
     espMacAddress[2],
@@ -321,11 +324,11 @@ void messageReceived(String topic, String payload, char * bytes, unsigned int le
   logc("MQTT");
 
   if (root.containsKey("rgb")) {
-    bool red = root["rgb"][0];
-    bool green = root["rgb"][1];
-    bool blue = root["rgb"][2];
+    unsigned int red = root["rgb"][0];
+    unsigned int green = root["rgb"][1];
+    unsigned int blue = root["rgb"][2];
 
-    Serial.printf(" RGB: (%d,%d,%d)", red, green, blue);
+    Serial.printf(" RGB: (%i,%i,%i)", red, green, blue);
     io_rgb(red, green, blue);
   }
 
