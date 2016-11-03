@@ -13,7 +13,6 @@ const char *wifi_ssid = "---SSID---";
 const char *wifi_pass = "---PASS---";
 
 const char *mqtt_server = "---SERVER---";
-const int mqtt_port = 1883;
 const char *mqtt_id_template = "wittycloud-%02x%02x%02x%02x%02x%02x";
 const char *mqtt_user = "";
 const char *mqtt_pass = "";
@@ -26,6 +25,12 @@ const bool enableDeepSleep = false;
 
 const int rotateRGBValues[] = {3, 7, 5, 7, 6, 7};
 const int rotateRGBValuesLen = sizeof(rotateRGBValues) / sizeof(rotateRGBValues[0]);
+
+//#define ENABLE_BME_280_SUPPORT
+
+#define SEALEVELPRESSURE_HPA (1013.25)
+
+
 
 /**********************************************************************
  * Runtime configuration (can be updated through MQTT messages)
@@ -40,11 +45,14 @@ bool rotateRGB = true;
 
 #include <ESP8266WiFi.h>
 #include <ArduinoJson.h>
+#include <MQTTClient.h>
+
+#ifdef ENABLE_BME_280_SUPPORT
 #include <Wire.h>
 #include <SPI.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
-#include <MQTTClient.h>
+#endif
 
 /**********************************************************************
  * Definitions
@@ -67,15 +75,14 @@ bool rotateRGB = true;
 //ADC_MODE(ADC_VCC);
 
 
-#define SEALEVELPRESSURE_HPA (1013.25)
-
-Adafruit_BME280 bme; // I2C
-
 /**********************************************************************
  * Internal status
  **********************************************************************/
 
+#ifdef ENABLE_BME_280_SUPPORT
+Adafruit_BME280 bme; // I2C
 bool bme280Initialized = false;
+#endif
 
 char sensor_buffer[512];
 
@@ -135,6 +142,10 @@ int io_button_user() {
   return !digitalRead(PIN_BUTTON_USER);
 }
 
+void io_ldr_setup() {
+  pinMode(PIN_LDR, INPUT);
+}
+
 int io_ldr() {
   return analogRead(PIN_LDR); 
 }
@@ -174,6 +185,7 @@ void io_led(bool on) {
 
 void io_bme280_setup() {
   logc("BME280");
+#ifdef ENABLE_BME_280_SUPPORT
   if (!bme.begin()) {
     Serial.println("Could not find a valid BME280 sensor, check wiring!");
     //while (1);
@@ -181,6 +193,7 @@ void io_bme280_setup() {
     logmln("OK");
     bme280Initialized = true;
   }
+#endif
 }
 
 /* Example payload:
@@ -190,6 +203,7 @@ void sensor_read() {
   StaticJsonBuffer<200> jsonBuffer;
   JsonObject& root = jsonBuffer.createObject();
   
+#ifdef ENABLE_BME_280_SUPPORT
   if (bme280Initialized) {
     root["temp"] = bme.readTemperature(), 2;
 //double_with_n_digits
@@ -197,6 +211,7 @@ void sensor_read() {
     root["altitude"] = bme.readAltitude(SEALEVELPRESSURE_HPA);
     root["humidity"] = bme.readHumidity();
   }
+#endif
 //  root["supply_voltage"] = ESP.getVcc() / 1024.0f;
   root["ldr"] = io_ldr(); 
   root["button_user"] = io_button_user();
@@ -264,7 +279,7 @@ void wifi_setup() {
 
 void mqtt_setup() {
   logc("MQTT");
-  mqtt.begin(mqtt_server, mqtt_port, wifi);
+  mqtt.begin(mqtt_server, wifi);
   while (!mqtt.connect(mqtt_id, mqtt_user, mqtt_pass)) {
     Serial.print(".");
     delay(1000);
@@ -363,6 +378,7 @@ void setup() {
   Serial.println(ESP.getResetReason());
 
   io_rgb_setup();
+  io_ldr_setup();
   io_led_setup();
   io_button_user_setup();
 
