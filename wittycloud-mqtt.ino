@@ -4,6 +4,10 @@
  * https://github.com/crenz/wittycloud-mqtt
  */
 
+/*
+http://www.rapidtables.com/convert/color/hsv-to-rgb.htm
+http://web.mit.edu/storborg/Public/hsvtorgb.c
+*/
 
 /**********************************************************************
  * Static configuration
@@ -17,8 +21,9 @@ const char *mqtt_id_template = "wittycloud-%02x%02x%02x%02x%02x%02x";
 const char *mqtt_user = "";
 const char *mqtt_pass = "";
 
-const char *mqtt_topic_cmd_template = "sensors/wittycloud/%02x%02x%02x%02x%02x%02x/cmd";
-const char *mqtt_topic_data_template = "sensors/wittycloud/%02x%02x%02x%02x%02x%02x/data";
+const char *mqtt_topic_cmd_template = "home/sensors/wittycloud/%02x%02x%02x%02x%02x%02x/cmd";
+const char *mqtt_topic_data_main_template = "home/sensors/wittycloud/%02x%02x%02x%02x%02x%02x/status";
+const char *mqtt_topic_data_bme280_template = "home/sensors/wittycloud/%02x%02x%02x%02x%02x%02x/bme280";
 
 const int sleepTimeS = 10;
 const bool enableDeepSleep = false;
@@ -26,7 +31,7 @@ const bool enableDeepSleep = false;
 const int rotateRGBValues[] = {3, 7, 5, 7, 6, 7};
 const int rotateRGBValuesLen = sizeof(rotateRGBValues) / sizeof(rotateRGBValues[0]);
 
-//#define ENABLE_BME_280_SUPPORT
+#define ENABLE_BME_280_SUPPORT
 
 #define SEALEVELPRESSURE_HPA (1013.25)
 
@@ -38,7 +43,7 @@ const int rotateRGBValuesLen = sizeof(rotateRGBValues) / sizeof(rotateRGBValues[
 
 int sensorUpdateRateMS = 3000;
 int rotateRateRGBMS = 1000;
-bool rotateRGB = true;
+bool rotateRGB = false;
 
 /**********************************************************************
  **********************************************************************/
@@ -50,6 +55,7 @@ bool rotateRGB = true;
 #ifdef ENABLE_BME_280_SUPPORT
 #include <Wire.h>
 #include <SPI.h>
+#include <BME280.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
 #endif
@@ -70,8 +76,8 @@ bool rotateRGB = true;
 #define PIN_LED_BLUE      2
 #define PIN_RGB_RED       15
 
-
-
+#define PIN_SDA           14 //4
+#define PIN_SCL           5
 
 
 //ADC_MODE(ADC_VCC);
@@ -103,8 +109,8 @@ bool prevButtonUser = false;
 
 char mqtt_id[200];
 char mqtt_topic_cmd[200];
-char mqtt_topic_data[200];
-
+char mqtt_topic_data_main[200];
+char mqtt_topic_data_bme280[200];
 
 /**********************************************************************
  * Helper functions: Logging
@@ -189,6 +195,10 @@ void io_led(bool on) {
 void io_bme280_setup() {
 #ifdef ENABLE_BME_280_SUPPORT
   logc("BME280");
+  pinMode(PIN_GPIO_16, OUTPUT);
+  digitalWrite(PIN_GPIO_16, true);
+  delay(100);
+  Wire.begin(PIN_SDA, PIN_SCL);
   if (!bme.begin()) {
     Serial.println("Could not find a valid BME280 sensor, check wiring!");
     //while (1);
@@ -206,15 +216,6 @@ void sensor_read() {
   StaticJsonBuffer<512> jsonBuffer;
   JsonObject& root = jsonBuffer.createObject();
   
-#ifdef ENABLE_BME_280_SUPPORT
-  if (bme280Initialized) {
-    root["temp"] = bme.readTemperature(), 2;
-//double_with_n_digits
-    root["pressure"] = bme.readPressure() / 100.0f;
-    root["altitude"] = bme.readAltitude(SEALEVELPRESSURE_HPA);
-    root["humidity"] = bme.readHumidity();
-  }
-#endif
 //  root["supply_voltage"] = ESP.getVcc() / 1024.0f;
   root["ldr"] = io_ldr(); 
   root["button_user"] = io_button_user();
@@ -225,6 +226,27 @@ void sensor_read() {
   Serial.println();
 
   root.printTo(sensor_buffer, sizeof(sensor_buffer));
+}
+
+void bme280_read_publish() {
+  StaticJsonBuffer<512> jsonBuffer;
+  JsonObject& root = jsonBuffer.createObject();
+  
+#ifdef ENABLE_BME_280_SUPPORT
+  if (bme280Initialized) {
+    root["temp"] = bme.readTemperature();
+    root["pressure"] = double_with_n_digits(bme.readPressure() / 100.0f, 6);
+//    root["altitude"] = bme.readAltitude(SEALEVELPRESSURE_HPA);
+    root["humidity"] = bme.readHumidity();
+
+    root.printTo(sensor_buffer, sizeof(sensor_buffer));
+
+    Serial.printf("[BME280] %s\n", sensor_buffer);
+    bool result = mqtt.publish(mqtt_topic_data_bme280, sensor_buffer);
+    Serial.printf("[BME280] MQTT publish result=%i\n", result);
+  }
+
+#endif
 }
 
 /**********************************************************************
@@ -252,7 +274,15 @@ void wifi_setup() {
     espMacAddress[4],
     espMacAddress[5]);
   
-  sprintf(mqtt_topic_data, mqtt_topic_data_template,
+  sprintf(mqtt_topic_data_main, mqtt_topic_data_main_template,
+    espMacAddress[0],
+    espMacAddress[1],
+    espMacAddress[2],
+    espMacAddress[3],
+    espMacAddress[4],
+    espMacAddress[5]);
+
+  sprintf(mqtt_topic_data_bme280, mqtt_topic_data_bme280_template,
     espMacAddress[0],
     espMacAddress[1],
     espMacAddress[2],
@@ -418,13 +448,16 @@ void loop() {
     Serial.printf("User button = %d\n", bu);
     prevButtonUser = bu;
     sensor_read();
-    mqtt.publish(mqtt_topic_data, sensor_buffer);
+    mqtt.publish(mqtt_topic_data_main, sensor_buffer);
   }
 
   if (millis() - lastMillis > sensorUpdateRateMS) {
+    io_led(true);
     lastMillis = millis();
     sensor_read();
-    mqtt.publish(mqtt_topic_data, sensor_buffer);
+    mqtt.publish(mqtt_topic_data_main, sensor_buffer);
+    bme280_read_publish();
+    io_led(false);
   }
 
   if (enableDeepSleep) {
