@@ -13,10 +13,7 @@ http://web.mit.edu/storborg/Public/hsvtorgb.c
  * Static configuration
  **********************************************************************/
 
-const char *wifi_ssid = "---SSID---";
-const char *wifi_pass = "---PASS---";
 
-const char *mqtt_server = "---SERVER---";
 const char *mqtt_id_template = "wittycloud-%02x%02x%02x%02x%02x%02x";
 const char *mqtt_user = "";
 const char *mqtt_pass = "";
@@ -31,7 +28,8 @@ const bool enableDeepSleep = false;
 const int rotateRGBValues[] = {3, 7, 5, 7, 6, 7};
 const int rotateRGBValuesLen = sizeof(rotateRGBValues) / sizeof(rotateRGBValues[0]);
 
-#define ENABLE_BME_280_SUPPORT
+//#define ENABLE_BME_280_SUPPORT
+#define ENABLE_PIR_SUPPORT
 
 #define SEALEVELPRESSURE_HPA (1013.25)
 
@@ -79,6 +77,8 @@ bool rotateRGB = false;
 #define PIN_SDA           14 //4
 #define PIN_SCL           5
 
+#define PIN_PIR           16
+
 
 //ADC_MODE(ADC_VCC);
 
@@ -106,6 +106,7 @@ int rotateRGBVal = 0;
 unsigned long lastMillisRotate = 0;
 
 bool prevButtonUser = false;
+bool prevPIR = false;
 
 char mqtt_id[200];
 char mqtt_topic_cmd[200];
@@ -209,6 +210,18 @@ void io_bme280_setup() {
 #endif
 }
 
+void io_pir_setup() {
+#ifdef ENABLE_PIR_SUPPORT
+  logc("PIR");
+  pinMode(PIN_PIR, INPUT);
+  logmln("OK");
+#endif
+}
+
+int io_pir() {
+  return digitalRead(PIN_PIR);
+}
+
 /* Example payload:
  *  {"rgb": [1, 0, 1], "sensorUpdateRate": 2000, "rotateRGB": true, "rotateRateRGB": 100}
  */
@@ -219,6 +232,8 @@ void sensor_read() {
 //  root["supply_voltage"] = ESP.getVcc() / 1024.0f;
   root["ldr"] = io_ldr(); 
   root["button_user"] = io_button_user();
+#ifdef ENABLE_PIR_SUPPORT
+  root["pir"] = io_pir();
   root["rotateRGBVal"] = rotateRGBVal;
 
   Serial.print("[Sensors] ");
@@ -414,6 +429,7 @@ void setup() {
   io_ldr_setup();
   io_led_setup();
   io_button_user_setup();
+  io_pir_setup();
 
   io_led(true);  
   io_rgb(true, false, false);
@@ -450,6 +466,17 @@ void loop() {
     sensor_read();
     mqtt.publish(mqtt_topic_data_main, sensor_buffer);
   }
+
+#ifdef ENABLE_PIR_SUPPORT
+  bool pir = io_pir();
+  if (prevPIR != pir) {
+    logc("PIR");
+    Serial.printf("Sensor = %d\n", pir);
+    prevPIR = pir;
+    sensor_read();
+    mqtt.publish(mqtt_topic_data_main, sensor_buffer);
+  }
+#endif
 
   if (millis() - lastMillis > sensorUpdateRateMS) {
     io_led(true);
