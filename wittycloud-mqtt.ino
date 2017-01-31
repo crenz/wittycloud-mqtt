@@ -13,7 +13,10 @@ http://web.mit.edu/storborg/Public/hsvtorgb.c
  * Static configuration
  **********************************************************************/
 
+const char *wifi_ssid = "SSID";
+const char *wifi_pass = "PASSWORD";
 
+const char *mqtt_server = "HOSTNAME";
 const char *mqtt_id_template = "wittycloud-%02x%02x%02x%02x%02x%02x";
 const char *mqtt_user = "";
 const char *mqtt_pass = "";
@@ -156,7 +159,7 @@ void io_ldr_setup() {
 }
 
 int io_ldr() {
-  return analogRead(PIN_LDR); 
+  return analogRead(PIN_LDR);
 }
 
 void io_rgb_setup() {
@@ -228,12 +231,13 @@ int io_pir() {
 void sensor_read() {
   StaticJsonBuffer<512> jsonBuffer;
   JsonObject& root = jsonBuffer.createObject();
-  
+
 //  root["supply_voltage"] = ESP.getVcc() / 1024.0f;
-  root["ldr"] = io_ldr(); 
+  root["ldr"] = io_ldr();
   root["button_user"] = io_button_user();
 #ifdef ENABLE_PIR_SUPPORT
   root["pir"] = io_pir();
+#endif
   root["rotateRGBVal"] = rotateRGBVal;
 
   Serial.print("[Sensors] ");
@@ -246,7 +250,7 @@ void sensor_read() {
 void bme280_read_publish() {
   StaticJsonBuffer<512> jsonBuffer;
   JsonObject& root = jsonBuffer.createObject();
-  
+
 #ifdef ENABLE_BME_280_SUPPORT
   if (bme280Initialized) {
     root["temp"] = bme.readTemperature();
@@ -288,7 +292,7 @@ void wifi_setup() {
     espMacAddress[3],
     espMacAddress[4],
     espMacAddress[5]);
-  
+
   sprintf(mqtt_topic_data_main, mqtt_topic_data_main_template,
     espMacAddress[0],
     espMacAddress[1],
@@ -312,7 +316,7 @@ void wifi_setup() {
     espMacAddress[3],
     espMacAddress[4],
     espMacAddress[5]);
-  
+
   WiFi.begin(wifi_ssid, wifi_pass);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
@@ -349,7 +353,7 @@ void mqtt_loop() {
 
 /*
  * Example payload:
- * 
+ *
  */
 
 void messageReceived(String topic, String payload, char * bytes, unsigned int length) {
@@ -359,7 +363,7 @@ void messageReceived(String topic, String payload, char * bytes, unsigned int le
   Serial.print("] ");
   Serial.println(payload);
 
-  StaticJsonBuffer<200> jsonBuffer;  
+  StaticJsonBuffer<200> jsonBuffer;
   JsonObject& root = jsonBuffer.parseObject(payload);
   if (!root.success()) {
     Serial.println("parseObject() failed");
@@ -405,7 +409,7 @@ void messageReceived(String topic, String payload, char * bytes, unsigned int le
     rotateRGB = rotate;
   }
 
-  
+
   Serial.println();
 }
 
@@ -431,14 +435,14 @@ void setup() {
   io_button_user_setup();
   io_pir_setup();
 
-  io_led(true);  
+  io_led(true);
   io_rgb(true, false, false);
   io_bme280_setup();
   io_rgb(false, true, false);
   wifi_setup();
   io_rgb(false, false, true);
   mqtt_setup();
-  
+
   io_led(false);
   io_rgb(false, false, false);
 
@@ -493,4 +497,3 @@ void loop() {
       delay(100);
   }
 }
-
