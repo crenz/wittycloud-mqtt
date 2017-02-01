@@ -14,16 +14,16 @@ http://web.mit.edu/storborg/Public/hsvtorgb.c
  **********************************************************************/
 
 const char *wifi_ssid = "SSID";
-const char *wifi_pass = "PASSWORD";
+const char *wifi_pass = "PASS";
 
 const char *mqtt_server = "HOSTNAME";
-const char *mqtt_id_template = "wittycloud-%02x%02x%02x%02x%02x%02x";
+const char *mqtt_id_template = "wittycloud.%02x%02x%02x%02x%02x%02x";
 const char *mqtt_user = "";
 const char *mqtt_pass = "";
 
-const char *mqtt_topic_cmd_template = "home/sensors/wittycloud/%02x%02x%02x%02x%02x%02x/cmd";
-const char *mqtt_topic_data_main_template = "home/sensors/wittycloud/%02x%02x%02x%02x%02x%02x/status";
-const char *mqtt_topic_data_bme280_template = "home/sensors/wittycloud/%02x%02x%02x%02x%02x%02x/bme280";
+const char *mqtt_topic_cmd_template = "command/DEFAULT_TENANT/wittycloud.%02x%02x%02x%02x%02x%02x";
+const char *mqtt_topic_telemetry_template = "telemetry/DEFAULT_TENANT/wittycloud.%02x%02x%02x%02x%02x%02x";
+const char *mqtt_topic_event_template = "event/DEFAULT_TENANT/wittycloud.%02x%02x%02x%02x%02x%02x";
 
 const int sleepTimeS = 10;
 const bool enableDeepSleep = false;
@@ -33,6 +33,7 @@ const int rotateRGBValuesLen = sizeof(rotateRGBValues) / sizeof(rotateRGBValues[
 
 //#define ENABLE_BME_280_SUPPORT
 #define ENABLE_PIR_SUPPORT
+//#define ENABLE_CMD
 
 #define SEALEVELPRESSURE_HPA (1013.25)
 
@@ -113,8 +114,9 @@ bool prevPIR = false;
 
 char mqtt_id[200];
 char mqtt_topic_cmd[200];
-char mqtt_topic_data_main[200];
+char mqtt_topic_telemetry[200];
 char mqtt_topic_data_bme280[200];
+char mqtt_topic_event[200];
 
 /**********************************************************************
  * Helper functions: Logging
@@ -225,31 +227,32 @@ int io_pir() {
   return digitalRead(PIN_PIR);
 }
 
-/* Example payload:
- *  {"rgb": [1, 0, 1], "sensorUpdateRate": 2000, "rotateRGB": true, "rotateRateRGB": 100}
- */
-void sensor_read() {
+
+void publish_json(const char * title, const char * topic, JsonObject& root) {
+  char buffer[200];
+
+  root.printTo(buffer, sizeof(buffer));
+  Serial.printf("[%s] MQTT publish [%s] %s\n", title, topic, buffer);
+  bool result = mqtt.publish(topic, buffer);
+  Serial.printf("[%s] MQTT publish result: %i\n", title, result);
+}
+
+
+void publish_sensors() {
   StaticJsonBuffer<512> jsonBuffer;
   JsonObject& root = jsonBuffer.createObject();
+  JsonObject& attr = root.createNestedObject("attributes");
 
-//  root["supply_voltage"] = ESP.getVcc() / 1024.0f;
-  root["ldr"] = io_ldr();
-  root["button_user"] = io_button_user();
-#ifdef ENABLE_PIR_SUPPORT
-  root["pir"] = io_pir();
-#endif
-  root["rotateRGBVal"] = rotateRGBVal;
+  attr["ldr"] = io_ldr();
+  attr["millis"] = millis();
 
-  Serial.print("[Sensors] ");
-  root.prettyPrintTo(Serial);
-  Serial.println();
-
-  root.printTo(sensor_buffer, sizeof(sensor_buffer));
+  publish_json("Sensors", mqtt_topic_telemetry, root);
 }
 
 void bme280_read_publish() {
   StaticJsonBuffer<512> jsonBuffer;
   JsonObject& root = jsonBuffer.createObject();
+  JsonObject& attr = root.createNestedObject("attributes");
 
 #ifdef ENABLE_BME_280_SUPPORT
   if (bme280Initialized) {
@@ -258,19 +261,29 @@ void bme280_read_publish() {
 //    root["altitude"] = bme.readAltitude(SEALEVELPRESSURE_HPA);
     root["humidity"] = bme.readHumidity();
 
-    root.printTo(sensor_buffer, sizeof(sensor_buffer));
-
-    Serial.printf("[BME280] %s\n", sensor_buffer);
-    bool result = mqtt.publish(mqtt_topic_data_bme280, sensor_buffer);
-    Serial.printf("[BME280] MQTT publish result=%i\n", result);
-  }
-
+  publish_json("BME280", mqtt_topic_telemetry, root);
 #endif
 }
+
+void publish_int_event(const char * name, const int value) {
+  StaticJsonBuffer<512> jsonBuffer;
+  JsonObject& root = jsonBuffer.createObject();
+  JsonObject& event = root.createNestedObject("event");
+  
+  event["name"] = name;
+  event["value"] = value;
+
+  publish_json("Event", mqtt_topic_event, root);
+}
+
 
 /**********************************************************************
  * Helper functions: Network
  **********************************************************************/
+
+void sprintfMac(char * target, const char * tmpl, const byte * macAddress) {
+  sprintf(target, tmpl, macAddress[0], macAddress[1], macAddress[2], macAddress[3], macAddress[4], macAddress[5]);
+}
 
 void wifi_setup() {
   logc("WiFi");
@@ -285,37 +298,10 @@ void wifi_setup() {
     espMacAddress[4],
     espMacAddress[5]);
 
-  sprintf(mqtt_topic_cmd, mqtt_topic_cmd_template,
-    espMacAddress[0],
-    espMacAddress[1],
-    espMacAddress[2],
-    espMacAddress[3],
-    espMacAddress[4],
-    espMacAddress[5]);
-
-  sprintf(mqtt_topic_data_main, mqtt_topic_data_main_template,
-    espMacAddress[0],
-    espMacAddress[1],
-    espMacAddress[2],
-    espMacAddress[3],
-    espMacAddress[4],
-    espMacAddress[5]);
-
-  sprintf(mqtt_topic_data_bme280, mqtt_topic_data_bme280_template,
-    espMacAddress[0],
-    espMacAddress[1],
-    espMacAddress[2],
-    espMacAddress[3],
-    espMacAddress[4],
-    espMacAddress[5]);
-
-  sprintf(mqtt_id, mqtt_id_template,
-    espMacAddress[0],
-    espMacAddress[1],
-    espMacAddress[2],
-    espMacAddress[3],
-    espMacAddress[4],
-    espMacAddress[5]);
+  sprintfMac(mqtt_topic_cmd, mqtt_topic_cmd_template, espMacAddress);
+  sprintfMac(mqtt_topic_telemetry, mqtt_topic_telemetry_template, espMacAddress);
+  sprintfMac(mqtt_topic_event, mqtt_topic_event_template, espMacAddress);
+  sprintfMac(mqtt_id, mqtt_id_template, espMacAddress);
 
   WiFi.begin(wifi_ssid, wifi_pass);
   while (WiFi.status() != WL_CONNECTED) {
@@ -337,7 +323,9 @@ void mqtt_setup() {
     delay(1000);
   }
   Serial.println("Connected");
+#ifdef ENABLE_CMD
   mqtt.subscribe(mqtt_topic_cmd);
+#endif
 }
 
 void mqtt_loop() {
@@ -467,8 +455,7 @@ void loop() {
     logc("Button");
     Serial.printf("User button = %d\n", bu);
     prevButtonUser = bu;
-    sensor_read();
-    mqtt.publish(mqtt_topic_data_main, sensor_buffer);
+    publish_int_event("user_button", bu);
   }
 
 #ifdef ENABLE_PIR_SUPPORT
@@ -477,16 +464,14 @@ void loop() {
     logc("PIR");
     Serial.printf("Sensor = %d\n", pir);
     prevPIR = pir;
-    sensor_read();
-    mqtt.publish(mqtt_topic_data_main, sensor_buffer);
+    publish_int_event("pir", pir);
   }
 #endif
 
   if (millis() - lastMillis > sensorUpdateRateMS) {
     io_led(true);
     lastMillis = millis();
-    sensor_read();
-    mqtt.publish(mqtt_topic_data_main, sensor_buffer);
+    publish_sensors();
     bme280_read_publish();
     io_led(false);
   }
@@ -497,3 +482,4 @@ void loop() {
       delay(100);
   }
 }
+
